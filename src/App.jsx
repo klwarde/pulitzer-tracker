@@ -1,23 +1,30 @@
 import { useState, useEffect } from "react";
 import "./App.css";
 
-const STORAGE_KEY = "pulitzer_read_books";
+const STORAGE_KEY = "pulitzer_book_states";
 
-function loadRead() {
+// Three states: "unread" | "reading" | "read"
+function loadStates() {
   try {
-    return new Set(JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]"));
+    return JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}");
   } catch {
-    return new Set();
+    return {};
   }
 }
 
-function saveRead(set) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify([...set]));
+function saveStates(obj) {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(obj));
+}
+
+function nextState(current) {
+  if (!current || current === "unread") return "reading";
+  if (current === "reading") return "read";
+  return "unread";
 }
 
 export default function App() {
   const [data, setData] = useState(null);
-  const [read, setRead] = useState(() => loadRead());
+  const [states, setStates] = useState(() => loadStates());
 
   useEffect(() => {
     fetch("/books.json")
@@ -25,13 +32,16 @@ export default function App() {
       .then(setData);
   }, []);
 
-  function toggle(year) {
-    setRead((prev) => {
-      const next = new Set(prev);
-      next.has(year) ? next.delete(year) : next.add(year);
-      saveRead(next);
+  function cycle(year) {
+    setStates((prev) => {
+      const next = { ...prev, [year]: nextState(prev[year]) };
+      saveStates(next);
       return next;
     });
+  }
+
+  function getState(year) {
+    return states[year] || "unread";
   }
 
   if (!data) {
@@ -44,15 +54,16 @@ export default function App() {
 
   const allBooks = data.decades.flatMap((d) => d.books.filter((b) => b.award));
   const totalBooks = allBooks.length;
-  const readCount = allBooks.filter((b) => read.has(b.year)).length;
-  const remaining = totalBooks - readCount;
+  const readCount = allBooks.filter((b) => getState(b.year) === "read").length;
+  const readingBooks = allBooks.filter((b) => getState(b.year) === "reading");
+  const remaining = totalBooks - readCount - readingBooks.length;
 
-  // Find next unread book in chronological order
-  const nextBook = allBooks.find((b) => !read.has(b.year));
+  // Next unread book in chronological order
+  const nextBook = allBooks.find((b) => getState(b.year) === "unread");
 
-  // Find current decade (first decade with unread books)
+  // Current decade: first with unread or reading books
   const currentDecade = data.decades.find((d) =>
-    d.books.some((b) => b.award && !read.has(b.year))
+    d.books.some((b) => b.award && getState(b.year) !== "read")
   );
 
   const progressPct = Math.round((readCount / totalBooks) * 100);
@@ -67,25 +78,23 @@ export default function App() {
 
       {/* Progress Panel */}
       <section className="progress-panel">
-        <div className="progress-ring-wrap">
-          <svg className="progress-ring" viewBox="0 0 80 80">
-            <circle cx="40" cy="40" r="34" className="ring-track" />
-            <circle
-              cx="40"
-              cy="40"
-              r="34"
-              className="ring-fill"
-              strokeDasharray={`${2 * Math.PI * 34}`}
-              strokeDashoffset={`${2 * Math.PI * 34 * (1 - progressPct / 100)}`}
-            />
-          </svg>
-          <div className="ring-label">
-            <span className="ring-count">{readCount}</span>
-            <span className="ring-sub">of {totalBooks}</span>
-          </div>
-        </div>
-
         <div className="progress-stats">
+          <div className="progress-ring-wrap">
+            <svg className="progress-ring" viewBox="0 0 80 80">
+              <circle cx="40" cy="40" r="34" className="ring-track" />
+              <circle
+                cx="40" cy="40" r="34"
+                className="ring-fill"
+                strokeDasharray={`${2 * Math.PI * 34}`}
+                strokeDashoffset={`${2 * Math.PI * 34 * (1 - progressPct / 100)}`}
+              />
+            </svg>
+            <div className="ring-label">
+              <span className="ring-count">{readCount}</span>
+              <span className="ring-sub">of {totalBooks}</span>
+            </div>
+          </div>
+
           <div className="stat">
             <span className="stat-value">{readCount}</span>
             <span className="stat-label">Read</span>
@@ -102,20 +111,28 @@ export default function App() {
           </div>
           <div className="stat-divider" />
           <div className="stat stat-next">
-            <span className="stat-value next-title">{nextBook?.title ?? "All done!"}</span>
-            <span className="stat-label">
-              {nextBook ? `${nextBook.year} · ${nextBook.author}` : ""}
-            </span>
+            {readingBooks.length > 0 ? (
+              <>
+                <span className="stat-value next-title reading-title">
+                  {readingBooks.map(b => b.title).join(", ")}
+                </span>
+                <span className="stat-label">Currently Reading</span>
+              </>
+            ) : (
+              <>
+                <span className="stat-value next-title">{nextBook?.title ?? "All done!"}</span>
+                <span className="stat-label">
+                  {nextBook ? `${nextBook.year} · ${nextBook.author}` : ""}
+                </span>
+              </>
+            )}
           </div>
         </div>
 
         <div className="overall-bar-wrap">
           <span className="bar-label">Overall Progress</span>
           <div className="overall-bar">
-            <div
-              className="overall-bar-fill"
-              style={{ width: `${progressPct}%` }}
-            />
+            <div className="overall-bar-fill" style={{ width: `${progressPct}%` }} />
           </div>
           <span className="bar-pct">{progressPct}%</span>
         </div>
@@ -126,6 +143,10 @@ export default function App() {
         <span className="legend-item">
           <span className="legend-swatch swatch-read" />
           Read
+        </span>
+        <span className="legend-item">
+          <span className="legend-swatch swatch-reading" />
+          Currently Reading
         </span>
         <span className="legend-item">
           <span className="legend-swatch swatch-unread" />
@@ -161,20 +182,23 @@ export default function App() {
                 {decade.books.map((book) =>
                   book.award ? (
                     <button
-                      key={book.year}
-                      className={`book-tile ${read.has(book.year) ? "book-tile--read" : "book-tile--unread"}`}
-                      onClick={() => toggle(book.year)}
-                      title={`${book.title} — ${book.author} (${book.year})\nClick to toggle read`}
+                      key={`${book.year}-${book.title}`}
+                      className={`book-tile book-tile--${getState(book.year)}`}
+                      onClick={() => cycle(book.year)}
+                      title={`${book.title} — ${book.author} (${book.year})\nClick to cycle: Unread → Reading → Read`}
                     >
                       <span className="tile-year">{book.year}</span>
                       <span className="tile-title">{book.title}</span>
                       <span className="tile-author">{book.author}</span>
-                      {read.has(book.year) && (
-                        <span className="tile-check">✓</span>
+                      {getState(book.year) === "read" && (
+                        <span className="tile-badge tile-check">✓</span>
+                      )}
+                      {getState(book.year) === "reading" && (
+                        <span className="tile-badge tile-bookmark">🔖</span>
                       )}
                     </button>
                   ) : (
-                    <div key={book.year} className="book-tile book-tile--noaward">
+                    <div key={`${book.year}-noaward`} className="book-tile book-tile--noaward">
                       <span className="tile-year">{book.year}</span>
                       <span className="tile-noaward">No Award</span>
                     </div>
@@ -193,7 +217,7 @@ export default function App() {
       </section>
 
       <footer className="site-footer">
-        <p>Click any book to mark it as read. Progress is saved in your browser.</p>
+        <p>Click any book to cycle through: Unread → Currently Reading → Read. Progress saves in your browser.</p>
       </footer>
     </div>
   );
